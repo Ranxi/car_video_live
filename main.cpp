@@ -15,8 +15,10 @@ int main(int argc, char *argv[])
     LiveWindow w;
     w.show();
     Encoder abc;
-    listOver = false;
 
-    abc.start();
+    listImage.clear();
+    listOver = false;
+    w.set_encoder(&abc);
+
     return a.exec();
 }

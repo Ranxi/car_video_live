@@ -17,7 +17,10 @@ LiveWindow::LiveWindow(QWidget *parent) :
     ui->graphicsView->scene()->addItem(&pixmap);
     timer.start(1000);
     rcver = NULL;
-    ui->videoEdit->setText("/media/teeshark/Work/LYQ/entertainment/18s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg");
+    pusher = NULL;
+    whetherToPush = true;
+    m_stat = Ui::IDLE;
+    ui->videoEdit->setText("/media/teeshark/Work/LYQ/entertainment/Relying.on.Heaven.to.Slaughter.Dragons.E49.1080P.WEB-DL.AAC.H264-DanNi.mp4");
 }
 
 LiveWindow::~LiveWindow()
@@ -25,17 +28,46 @@ LiveWindow::~LiveWindow()
     delete ui;
 }
 
+void LiveWindow::set_encoder(Encoder *ecder){
+    pusher = ecder;
+}
+
 
 void LiveWindow::on_startBtn_pressed(){
-    if(video.isOpened() || rcver!=NULL){
+    if(video.isOpened() || (pusher!=NULL && pusher->isRunning()) || rcver!=NULL){
         video.release();
         disconnect(&timer, &QTimer::timeout, this, 0);
-        ui->startBtn->setText("Start");
         if(vtype==Ui::NETWORK){
             rcver->close();
             delete rcver;
             rcver = NULL;
         }
+        else{
+            assert(m_stat==Ui::PUSHING);
+            pusher->requestInterruption();
+            pusher->quit();
+            pusher->wait();
+            mutex.lock();
+            for (auto x : listImage)
+                x.release();
+            listImage.clear();
+            mutex.unlock();
+        }
+        m_stat = Ui::IDLE;
+        ui->startBtn->setText("Start");
+        listOver = true;
+        return;
+    }
+    else if (pusher!=NULL && pusher->isFinished() && (Ui::IDLE!=m_stat)){
+        disconnect(&timer, &QTimer::timeout, this, 0);
+        mutex.lock();
+        for (auto x : listImage)
+            x.release();
+        listImage.clear();
+        mutex.unlock();
+        m_stat = Ui::IDLE;
+        ui->startBtn->setText("Start");
+        listOver = true;
         return;
     }
     else{
@@ -58,6 +90,7 @@ void LiveWindow::on_startBtn_pressed(){
             rcver->bind(QHostAddress::Any, port);
             connect(rcver, &QUdpSocket::readyRead, this, &LiveWindow::processPendingDatagram);
             vtype = Ui::NETWORK;
+            // ************** RETRANSMIT FROM HTTP TO ANOTHER ADDRESS NOT IMPLEMENTED *************
         }
         else{
             //qDebug() <<  ui->videoEdit->text();
@@ -71,7 +104,12 @@ void LiveWindow::on_startBtn_pressed(){
             connect(&timer, &QTimer::timeout, this, &LiveWindow::updateFrame);
             vtype = Ui::LOCALFILE;
         }
+        if (whetherToPush && Ui::NETWORK!=vtype){
+            pusher->set_filename_Run();
+            listOver = false;
+        }
         ui->startBtn->setText("Stop");
+        m_stat = Ui::PUSHING;
         timer.start(40);
     }
 }
@@ -186,7 +224,7 @@ void LiveWindow::updateFrame(){
 // http://172.16.20.252:23323
 // /media/teeshark/OS/Users/Public/Videos/Sample Videos/animal.wmv
 // /media/teeshark/OS/Users/admin/Videos/Prepar3D/Prepar3D 04.13.2018 - 16.53.52.01.mp4
-// /media/teeshark/OS/Users/admin/Desktop/shifeiJ20\VID_20180513_203441.mp4_20180526_155356.mkv
+// /media/teeshark/OS/Users/admin/Desktop/shifeiJ20/VID_20180513_203441.mp4_20180526_155356.mkv
 // /media/teeshark/Work/LYQ/entertainment/Relying.on.Heaven.to.Slaughter.Dragons.E49.1080P.WEB-DL.AAC.H264-DanNi.mp4
 // /media/teeshark/Work/LYQ/entertainment/18s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg
 // /media/teeshark/Work/LYQ/entertainment/49s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg

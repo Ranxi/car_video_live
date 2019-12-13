@@ -2,13 +2,19 @@
 #include <cinttypes>
 #include <QMutex>
 #include <QTime>
+#include <ext/hash_map>
+#include <algorithm>
+
 
 extern QMutex mutex;
 extern QList<cv::Mat > listImage;
 extern bool listOver;
 //extern QList<IplImage*> listImage;
-std::string RDIP = "localhost";
+std::string RDIP = "172.16.20.116";
+//std::string RDIP = "127.0.0.1";
 int RDPORT = 56789;
+__gnu_cxx::hash_map<int, int64_t> buff_latency;
+std::vector<int> laten_list;
 
 Encoder::Encoder(QObject *parent):QThread(parent)
 {
@@ -22,17 +28,25 @@ Encoder::~Encoder(void){
 
 void Encoder::run()
 {
-    encode_iplimage("./nothing.h264");
+    encode_and_push();
+}
+
+void Encoder::set_filename_Run(){
+    char push_addr[256];
+    sprintf(push_addr, "rtp://%s:%d/live", RDIP.c_str(), RDPORT);
+    this->push_addr = std::string(push_addr);
+    this->start();
 }
 
 
-static bool encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
-                   FILE *outfile)
+
+static void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
+                   AVFormatContext *fmtctx)
 {
-    int ret;
+    int ret, ret2;
     /* send the frame to the encoder */
     if (frame)
-        qDebug("[Encoder] ----> Send frame %3""ld""\n", frame->pts);
+        qDebug("[Encoder] ----> Send frame %3""lld""\n", frame->pts);
     ret = avcodec_send_frame(enc_ctx, frame);
     if (ret < 0) {
         fprintf(stderr, "Error sending a frame for encoding\n");
@@ -43,20 +57,25 @@ static bool encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
             // 在解码或编码开始时，编解码器可能会接收多个输入帧/数据包而不返回帧，
             // 直到其内部缓冲区被填充为止。
-            if (ret==AVERROR_EOF)
-                qDebug("[Encoder] avcodec_receive_packet END!");
-            return (ret==AVERROR_EOF);
+            return;
         }
         else if (ret < 0) {
             printf("Error during encoding\n");
             exit(1);
         }
-        qDebug("[Encoder] ---> Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
-        fwrite(pkt->data, 1, pkt->size, outfile);
+//        printf("Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
+//        fwrite(pkt->data, 1, pkt->size, outfile);
+        qDebug("[Encoder] ----> Receive packet %3""lld"", latency: %d\n", pkt->pts, av_gettime()-buff_latency[pkt->pts]);
+        laten_list.push_back(av_gettime()-buff_latency[pkt->pts]);
+        buff_latency.erase(buff_latency[pkt->pts]);
+        ret2 = av_interleaved_write_frame(fmtctx, pkt);
+        if (ret2 < 0)
+            printf("Error muxing packet\n");
         av_packet_unref(pkt);
+        //av_free_packet(pkt);
     }
-    return (ret==AVERROR_EOF);
 }
+
 
 static cv::Mat avframeToCvmat(const AVFrame * frame){
     int width = frame->width;
@@ -84,8 +103,9 @@ static void cvmat_to_avframe(cv::Mat &matframe, AVFrame *frame){
     // |>>>>>>>>> code from dalao, refer to: https://zhuanlan.zhihu.com/p/80350418 >>>>>>>>
     int width = matframe.cols;
     int height = matframe.rows;
-//    if ((matframe.cols <= 0 || matframe.cols > 2000) || matframe.rows <= 0 || matframe.rows > 2000)
-//        qDebug("something wrong with matframe");
+    // qDebug("matframe cols: %d, rows: %d", width, height);
+    if ((matframe.cols <= 0 || matframe.cols > 2000) || matframe.rows <= 0 || matframe.rows > 2000)
+        qDebug("something wrong with matframe");
     int cvLinesizes[1];
     cvLinesizes[0] = matframe.step1();
     if(frame==NULL){
@@ -100,16 +120,17 @@ static void cvmat_to_avframe(cv::Mat &matframe, AVFrame *frame){
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
 }
 
-void Encoder::encode_iplimage(const char* filenm){
-//    this->filename = filenm;
+void Encoder::encode_and_push(){
 //    QList<IplImage*> listImage;
     avcodec_register_all();
 
-    const char *filename=filenm;
     const AVCodec *codec;
     AVCodecContext *c= NULL;
+    AVFormatContext *fmtctx;
+    AVStream *video_st=NULL;
     int i, ret, x, y;
-    FILE *f;
+    int videoindex = 0;
+    //FILE *f;
     AVFrame *frame; // *tmpframe;
     AVPacket *pkt;
     uint8_t endcode[] = { 0, 0, 1, 0xb7 };
@@ -120,14 +141,31 @@ void Encoder::encode_iplimage(const char* filenm){
         printf( "Codec '%d' not found\n", codec_id);
         exit(1);
     }
-    c = avcodec_alloc_context3(codec);
-    if (!c) {
-        printf( "Could not allocate video codec context\n");
+    // |>>>>>>>>>>>>>>> init for RTSP >>>>>>>>>>>>>
+    avformat_network_init();
+    if ( this->push_addr.compare(0, 4, "rtsp")==0)
+        avformat_alloc_output_context2(&fmtctx, NULL, "rtsp", this->push_addr.c_str());
+    else if(this->push_addr.compare(0, 3, "rtp")==0)
+        avformat_alloc_output_context2(&fmtctx, NULL, "rtp", this->push_addr.c_str());
+    else{
+        fprintf(stderr, "Do not support push address: %s\n", this->push_addr.c_str());
         exit(1);
     }
-    pkt = av_packet_alloc();
-    if (!pkt)
+//    fmtctx = avformat_alloc_context();
+//    fmtctx->oformat = av_guess_format("rtsp", NULL, NULL);
+//    sprintf(fmtctx->filename,"rtsp://%s:%d/dddd", RDIP.c_str(), RDPORT);
+//    avio_open(&fmtctx->pb, fmtctx->filename, AVIO_FLAG_WRITE);
+
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
+    video_st = avformat_new_stream(fmtctx, codec);
+    c = avcodec_alloc_context3(codec);
+    //avcodec_get_context_defaults3(c, codec);
+    c->codec_id = codec_id;
+    if (!c) {
+        fprintf(stderr, "Could not allocate video codec context\n");
         exit(1);
+    }
+
     /* put sample parameters */
     c->bit_rate = 2495000;
     /* resolution must be a multiple of two */
@@ -136,6 +174,7 @@ void Encoder::encode_iplimage(const char* filenm){
     /* frames per second */
     AVRational avtmp = {1,25};
     c->time_base = avtmp;
+    video_st->time_base = avtmp;
 //    AVRational avtmp2 = {25, 1};
 //    c->framerate = avtmp2;
     /* emit one intra frame every ten frames
@@ -144,27 +183,47 @@ void Encoder::encode_iplimage(const char* filenm){
      * then gop_size is ignored and the output of encoder
      * will always be I frame irrespective to gop_size
      */
-    c->gop_size = 10;
+    c->gop_size = 5;
     c->max_b_frames = 0;
     c->pix_fmt = AV_PIX_FMT_YUV420P;
-    if (codec->id == AV_CODEC_ID_H264){
-        av_opt_set(c->priv_data, "preset", "veryfast", 0);
-        //av_opt_set(c->priv_data, "tune","stillimage,fastdecode,zerolatency",0);
-        //av_opt_set(c->priv_data, "tune","zerolatency",0);
-        //av_opt_set(c->priv_data, "x264opts","crf=26:vbv-maxrate=728:vbv-bufsize=364:keyint=25",0);
-    }
+    c->codec_type = AVMEDIA_TYPE_VIDEO;
+    c->codec_tag = 0;
+    if(fmtctx->oformat->flags & AVFMT_GLOBALHEADER)
+        c->flags|=  AV_CODEC_FLAG_GLOBAL_HEADER;
+    av_opt_set(c->priv_data, "preset", "veryfast", 0);
+    av_opt_set(c->priv_data, "tune","stillimage,zerolatency",0);
+//    av_opt_set(c->priv_data, "x264opts","crf=26:vbv-maxrate=728:vbv-bufsize=364:keyint=25",0);
     /* open it */
-    ret = avcodec_open2(c, codec, NULL);
+    video_st->codec = c;
+    videoindex = video_st->id = fmtctx->nb_streams - 1;  //加入到fmt_ctx流
+    ret = avcodec_open2(video_st->codec, codec, NULL);
     if (ret < 0) {
-//        fprintf(stderr, "Could not open codec: %s\n", av_err2str(ret));
-        fprintf(stderr, "Could not open codec: %d\n", ret);
+        fprintf(stderr, "Could not open codec: %s\n", av_err2str(ret));
         exit(1);
     }
-    f = fopen(filename, "wb");
-    if (!f) {
-        fprintf(stderr, "Could not open %s\n", filename);
+
+
+    AVDictionary *format_opts = NULL;
+    av_dict_set(&format_opts, "stimeout", std::to_string(2 * 1000000).c_str(), 0);
+    av_dict_set(&format_opts, "rtsp_transport", "udp", 0);
+
+    fmtctx->max_interleave_delta = 1000000;
+    if (!(fmtctx->oformat->flags & AVFMT_NOFILE)) {
+        ret = avio_open(&fmtctx->pb, fmtctx->filename, AVIO_FLAG_WRITE);
+        if (ret < 0){
+            fprintf(stderr, "Could Could not open output file '%s': %s", fmtctx->filename, av_err2str(ret));
+            exit(1);
+        }
+    }
+
+    ret = avformat_write_header(fmtctx, &format_opts);
+    if (ret < 0){
+        fprintf(stderr, "Write header error: %s\n", av_err2str(ret));
         exit(1);
     }
+
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
+
     frame = av_frame_alloc();
     if (!frame) {
         fprintf(stderr, "Could not allocate video frame\n");
@@ -175,29 +234,41 @@ void Encoder::encode_iplimage(const char* filenm){
     frame->height = c->height;
     ret = av_frame_get_buffer(frame, 0);
     if (ret < 0) {
-        fprintf(stderr, "Could not allocate the video frame data\n");
+        fprintf(stderr, "Could not allocate the video frame data: %s\n", av_err2str(ret));
         exit(1);
     }
-    /* encode 1 second of video */
+    // alloc packet for receiving encoded img
+    pkt = av_packet_alloc();
+    if (!pkt)
+        exit(1);
+    /* encode video */
     QTime cur_time;
     cur_time.start();
     int sum_time = 0, intval;
     int index = 0;
-    while (true) {
+
+    while (!isInterruptionRequested() && !listOver ) {
         mutex.lock();
-        if(listImage.size() <= 0){
+        if(listImage.count() <= 0){
             mutex.unlock();
-            if (listOver)
-                break;
-            else
-                continue;
+            continue;
         }
         intval = cur_time.elapsed();
         cur_time.start();
-        qDebug("[Encoder] one frame time mutex: %d\n", intval);
-        cv::Mat pFrame = listImage[0];
-//        IplImage *pFrame = listImage[0];
-        listImage.pop_front();
+        qDebug("[Encoder] one frame time lock: %d\n", intval);
+        cv::Mat pFrame;
+        if (listImage.count() > 3){
+            pFrame = listImage.back();
+            listImage.pop_back();
+            for (auto x : listImage)
+                x.release();
+            listImage.clear();
+        }
+        else{
+            pFrame = listImage[0];
+    //        IplImage *pFrame = listImage[0];
+            listImage.pop_front();
+        }
         mutex.unlock();
         fflush(stdout);
         /* make sure the frame data is writable */
@@ -214,9 +285,35 @@ void Encoder::encode_iplimage(const char* filenm){
         intval = cur_time.elapsed();
         cur_time.start();
         qDebug("[Encoder] one frame time convert: %d\n", intval);
-        frame->pts = index++; //av_gettime();       // use the time as pts will boom up the file size (it seems the quality improves as well.)
-        /* encode the image */
-        encode(c, frame, pkt, f);
+        frame->pts = index++; // av_gettime();
+        buff_latency[frame->pts] = av_gettime();
+        // |>>>>>>>>> Encode the image >>>>>>>>>>
+//        av_init_packet(pkt);
+        pkt->stream_index = videoindex;
+        encode(video_st->codec, frame, pkt, fmtctx);
+//        av_init_packet(pkt);
+//        pkt->pts = AV_NOPTS_VALUE;        // Presentation timestamp; the time at which the decompressed packet will be presented to the user
+//        pkt->dts = AV_NOPTS_VALUE;        // Decompression timestamp; the time at which the packet is decompressed.
+//        frame->pts = video_st->codec->frame_number;
+//        ret = avcodec_encode_video2(video_st->codec, pkt, frame, &got_output);
+//        if (ret < 0) {
+//            fprintf(stderr, "Error encoding video frame: %d\n", ret);
+//            exit(1);
+//        }
+//        if (got_output){
+//            if (c->coded_frame->key_frame)
+//                pkt->flags |= AV_PKT_FLAG_KEY;
+//            pkt->stream_index = video_st->index;
+//            if (pkt->pts != AV_NOPTS_VALUE)
+//                pkt->pts = av_rescale_q(pkt->pts, video_st->codec->time_base, video_st->time_base);
+//            if (pkt->dts != AV_NOPTS_VALUE)
+//                pkt->dts = av_rescale_q(pkt->dts, video_st->codec->time_base, video_st->time_base);
+//            ret = av_interleaved_write_frame(fmtctx, pkt);
+//        }
+//        else{
+//            ret = 0;
+//        }
+        // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
         intval = cur_time.elapsed();
         cur_time.start();
         qDebug("[Encoder] one frame time encode: %d\n", intval);
@@ -225,16 +322,33 @@ void Encoder::encode_iplimage(const char* filenm){
     /* flush the encoder */
     qDebug("i is: %d\n", i);
     qDebug("I am over!.");
-    encode(c, NULL, pkt, f);
+    encode(video_st->codec, NULL, pkt, fmtctx);
 
     /* add sequence end code to have a real MPEG file */
-    fwrite(endcode, 1, sizeof(endcode), f);
-    fclose(f);
+    // fwrite(endcode, 1, sizeof(endcode), f);
+    //fclose(f);
+
+    av_write_trailer(fmtctx);
+
+    // |>>>>>> print SDP info for VLC >>>>>>>
+    char sdp[2048];
+    av_sdp_create(&fmtctx,1, sdp, sizeof(sdp));
+    qDebug("sdp:\n%s\n", sdp);
+    fflush(stdout);
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
+
+    int64_t sum_laten = 0;
+    for(auto x : laten_list)
+        sum_laten += x;
+    qDebug("\navg latency:%f\n", (float)sum_laten*1.0/laten_list.size());
+
     intval = cur_time.elapsed();
     sum_time += intval;
     qDebug("last interval: %d, total time: %d\n", intval, sum_time);
+
     avcodec_free_context(&c);
     av_frame_free(&frame);
     av_packet_free(&pkt);
+    //avformat_free_context(fmtctx);
 
 }

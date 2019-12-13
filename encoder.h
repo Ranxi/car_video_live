@@ -28,10 +28,11 @@ class Encoder:public QThread{
 public:
     Encoder(QObject *parent=0);
     ~Encoder(void);
-    void encode_iplimage(const char* s);
+    void encode_and_push();
     void run();
 public:
-    QString filename;
+    std::string push_addr;
+    void set_filename_Run();
 };
 
 #endif // ENCODER_H
