@@ -47,11 +47,13 @@ LIBS += -L/usr/local/ffmpeg/lib/ -lavcodec -lavdevice -lavfilter -lavformat -lav
 SOURCES += \
         main.cpp \
         livewindow.cpp \
-    encoder.cpp
+    encoder.cpp \
+    radialstitcher.cpp
 
 HEADERS += \
         livewindow.h \
-    encoder.h
+    encoder.h \
+    radialstitcher.h
 
 FORMS += \
         livewindow.ui
