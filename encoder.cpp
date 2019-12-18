@@ -4,6 +4,7 @@
 #include <QTime>
 #include <ext/hash_map>
 #include <algorithm>
+#include <cstring>
 
 
 extern QMutex mutex;
@@ -136,7 +137,8 @@ void Encoder::encode_and_push(){
     uint8_t endcode[] = { 0, 0, 1, 0xb7 };
     AVCodecID codec_id = AV_CODEC_ID_H264;
     /* find the mpeg1video encoder */
-    codec = avcodec_find_encoder((AVCodecID)codec_id);
+//    codec = avcodec_find_encoder((AVCodecID)codec_id);
+    codec = avcodec_find_encoder_by_name("h264_nvenc");
     if (!codec) {
         printf( "Codec '%d' not found\n", codec_id);
         exit(1);
@@ -190,8 +192,16 @@ void Encoder::encode_and_push(){
     c->codec_tag = 0;
     if(fmtctx->oformat->flags & AVFMT_GLOBALHEADER)
         c->flags|=  AV_CODEC_FLAG_GLOBAL_HEADER;
-    av_opt_set(c->priv_data, "preset", "veryfast", 0);
-    av_opt_set(c->priv_data, "tune","stillimage,zerolatency",0);
+    if (strcmp(c->codec->name, "libx264")==0){
+        av_opt_set(c->priv_data, "preset", "veryfast", 0);
+        av_opt_set(c->priv_data, "tune","stillimage,zerolatency",0);
+    }
+    else if (strcmp(c->codec->name, "h264_nvenc")==0){
+        av_opt_set(c->priv_data, "preset", "llhq", 0);
+        av_opt_set(c->priv_data, "delay", "0", 0);
+        av_opt_set(c->priv_data, "zerolatency", "1", 0);
+        av_opt_set(c->priv_data, "gpu", "0", 0);
+    }
 //    av_opt_set(c->priv_data, "x264opts","crf=26:vbv-maxrate=728:vbv-bufsize=364:keyint=25",0);
     /* open it */
     video_st->codec = c;
