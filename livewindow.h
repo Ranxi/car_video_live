@@ -16,7 +16,7 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/imgproc/imgproc_c.h"
 #include "encoder.h"
-
+#include "radialstitcher.h"
 
 
 namespace Ui {
@@ -53,10 +53,12 @@ private:
     QUdpSocket *rcver;
     Ui::VIDEOTYPE vtype;
     Ui::SERVERSTAT m_stat;
+    std::vector<cv::VideoCapture> cam_captures;
     bool whetherToPush;
 private slots:
     void on_startBtn_pressed();
     void updateFrame();
+    void updateFrameFromStitcher();
     void processPendingDatagram();
 public:
     void set_encoder(Encoder *ecder);

@@ -30,9 +30,11 @@ public:
     ~Encoder(void);
     void encode_and_push();
     void run();
-public:
+    void set_filename_Run(int w, int h);
+private:
     std::string push_addr;
-    void set_filename_Run();
+    int video_w;
+    int video_h;
 };
 
 struct JYFrame{

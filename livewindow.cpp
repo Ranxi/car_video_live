@@ -19,8 +19,9 @@ LiveWindow::LiveWindow(QWidget *parent) :
     rcver = NULL;
     pusher = NULL;
     whetherToPush = true;
-    m_stat = Ui::IDLE;
-    ui->videoEdit->setText("/media/teeshark/Work/LYQ/autonomous_car/video/360s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mp4");
+    m_stat = Ui::SERVERSTAT::IDLE;
+    vtype = Ui::VIDEOTYPE::NONE;
+    ui->videoEdit->setText("/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4");
 }
 
 LiveWindow::~LiveWindow()
@@ -37,13 +38,18 @@ void LiveWindow::on_startBtn_pressed(){
     if(video.isOpened() || (pusher!=NULL && pusher->isRunning()) || rcver!=NULL){
         video.release();
         disconnect(&timer, &QTimer::timeout, this, 0);
-        if(vtype==Ui::NETWORK){
+        if(vtype==Ui::VIDEOTYPE::NETWORK){
             rcver->close();
             delete rcver;
             rcver = NULL;
         }
         else{
-            assert(m_stat==Ui::PUSHING);
+            if (vtype==Ui::CAMERA){
+                for (auto cap : cam_captures)
+                    cap.release();
+                cam_captures.clear();
+            }
+            assert(m_stat==Ui::SERVERSTAT::PUSHING);
             pusher->requestInterruption();
             pusher->quit();
             pusher->wait();
@@ -53,19 +59,20 @@ void LiveWindow::on_startBtn_pressed(){
             listImage.clear();
             mutex.unlock();
         }
-        m_stat = Ui::IDLE;
+        vtype = Ui::VIDEOTYPE::NONE;
+        m_stat = Ui::SERVERSTAT::IDLE;
         ui->startBtn->setText("Start");
         listOver = true;
         return;
     }
-    else if (pusher!=NULL && pusher->isFinished() && (Ui::IDLE!=m_stat)){
+    else if (pusher!=NULL && pusher->isFinished() && (Ui::SERVERSTAT::IDLE!=m_stat)){
         disconnect(&timer, &QTimer::timeout, this, 0);
         mutex.lock();
         for (auto x : listImage)
             x->frame.release();
         listImage.clear();
         mutex.unlock();
-        m_stat = Ui::IDLE;
+        m_stat = Ui::SERVERSTAT::IDLE;
         ui->startBtn->setText("Start");
         listOver = true;
         return;
@@ -73,14 +80,26 @@ void LiveWindow::on_startBtn_pressed(){
     else{
         bool isCamera;
         int cameraIndex = ui->videoEdit->text().toInt(&isCamera);
+        int v_width, v_height;
         if(isCamera){
-            if(!video.open(cameraIndex)){
+            if(cameraIndex < 100 && !video.open(cameraIndex)){
                 QMessageBox::critical(this, "amera Error", "Make sure you entered a correct camera index, or that the camera is not being accessed by another program!");
                 ui->startBtn->setText("Start");
                 return;
             }
-            connect(&timer, &QTimer::timeout, this, &LiveWindow::updateFrame);
-            vtype = Ui::CAMERA;
+            const std::string cam_idx[4] = {"/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4",
+                                            "/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4",
+                                            "/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4",
+                                            "/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4"};
+            this->cam_captures.clear();
+            for (int i=0; i < 4; i++){
+                cv::VideoCapture capture(cam_idx[i]);
+                this->cam_captures.push_back(capture);
+            }
+            connect(&timer, &QTimer::timeout, this, &LiveWindow::updateFrameFromStitcher);
+            vtype = Ui::VIDEOTYPE::CAMERA;
+            v_width = 640 << 2;
+            v_height = 520;
         }
         else if(ui->videoEdit->text().trimmed().contains("http://") || ui->videoEdit->text().trimmed().contains("https://")){
             QString addr = ui->videoEdit->text().trimmed();
@@ -89,7 +108,7 @@ void LiveWindow::on_startBtn_pressed(){
             rcver = new QUdpSocket(this);
             rcver->bind(QHostAddress::Any, port);
             connect(rcver, &QUdpSocket::readyRead, this, &LiveWindow::processPendingDatagram);
-            vtype = Ui::NETWORK;
+            vtype = Ui::VIDEOTYPE::NETWORK;
             // ************** RETRANSMIT FROM HTTP TO ANOTHER ADDRESS NOT IMPLEMENTED *************
         }
         else{
@@ -97,36 +116,37 @@ void LiveWindow::on_startBtn_pressed(){
             if(!video.open(ui->videoEdit->text().trimmed().toStdString())){
                     QMessageBox::critical(this,
                                               "Video Error",
-                                              "Make sure you entered a correct and supported video file path,"
-                                              "<br>or a correct RTSP feed URL!");
+                                              "Make sure you entered a valid video file path!");
                     return;
             }
             connect(&timer, &QTimer::timeout, this, &LiveWindow::updateFrame);
-            vtype = Ui::LOCALFILE;
+            vtype = Ui::VIDEOTYPE::LOCALFILE;
+            v_width = 1920;
+            v_height = 1080;
         }
-        if (whetherToPush && Ui::NETWORK!=vtype){
-            pusher->set_filename_Run();
+        if (whetherToPush && Ui::VIDEOTYPE::NETWORK!=vtype){
+            pusher->set_filename_Run(v_width, v_height);
             listOver = false;
         }
         ui->startBtn->setText("Stop");
-        m_stat = Ui::PUSHING;
+        m_stat = Ui::SERVERSTAT::PUSHING;
         timer.start(40);
     }
 }
 
 void LiveWindow::updateFrame(){
 
-    if (vtype!=Ui::NETWORK)
+    if (vtype!=Ui::VIDEOTYPE::NETWORK)
         video >> frame;
     if(!frame.empty()){
 //        IplImage *pimage = &IplImage(frame);
 //        IplImage *image = cvCloneImage(pimage);
-        mutex.lock();
         JYFrame * curframe = new JYFrame(av_gettime(), frame.clone());
+        mutex.lock();
         listImage.append(curframe);
 //        listImage.append(image);
-        qDebug("[Player] listImage count : %d\n", listImage.size());
         mutex.unlock();
+        qDebug("[Player] listImage count : %d\n", listImage.size());
 
         QImage qimg((uchar*)(frame.data),
                     frame.cols,
@@ -161,6 +181,53 @@ void LiveWindow::updateFrame(){
 // D:\LYQ\entertainment\49s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg
 
 
+
+
+void LiveWindow::updateFrameFromStitcher(){
+    bool EMPTY = false;
+    std::vector<cv::Mat> img_list;
+    RadialStitcher *rs = new RadialStitcher(1);
+    cv::Rect rect(19, 0, 602, 480);
+    std::vector<cv::Mat> cylinder_maps = rs->cylinder_projection_map(640, 480, 720);  //calculate the mapping of the cylinder
+
+    for (int i = 0; i < 4; ++i) {
+        cv::Mat frame; cv::Mat cylinder;
+        cam_captures[i] >> frame;
+        if(frame.empty()){
+            EMPTY = true;
+            break;
+        }
+        cv::remap(frame, cylinder, cylinder_maps[0], cylinder_maps[1],cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
+        cylinder = cylinder(rect); //remove the blank edge of the cylinder image
+        img_list.push_back(cylinder);
+    }
+    if(EMPTY){
+        listOver = true;
+        on_startBtn_pressed();
+        return;
+    }
+    cv::Mat result = rs->Stitch(img_list);
+    for (auto cyl : img_list)
+        cyl.release();
+    img_list.clear();
+//    if ((cv::waitKey(25) & 0XFF) == 27)
+//        return;
+    JYFrame * curframe = new JYFrame(av_gettime(), result.clone());
+    mutex.lock();
+    listImage.append(curframe);
+    mutex.unlock();
+    qDebug("[Player] listImage count : %d\n", listImage.size());
+    QImage qimg((uchar*)(result.data),
+                result.cols,
+                result.rows,
+                result.step,
+                QImage::Format_RGB888);
+    QTime cur_time;
+    cur_time.start();
+    QPixmap tmpPixMap = QPixmap::fromImage(qimg.rgbSwapped());
+    pixmap.setPixmap(tmpPixMap);
+    qDebug("[Player] update pixmap: %d\n", cur_time.elapsed());
+}
 
 //void LiveWindow::on_startBtn_pressed(){
 //    //using namespace cv;
@@ -234,8 +301,8 @@ void LiveWindow::updateFrame(){
 // /media/teeshark/Work/LYQ/entertainment/49s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg
 //  ====== WITH TIME COUNTER ======
 // /media/teeshark/Work/LYQ/autonomous_car/video/timecounter.mp4
-// /media/teeshark/Work/LYQ/autonomous_car/video/360s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mp4
-// /media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mp4
+// /media/teeshark/Work/LYQ/autonomous_car/video/360s.Relying.mp4
+// /media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4
 
 
 

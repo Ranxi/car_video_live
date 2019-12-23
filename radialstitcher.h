@@ -24,7 +24,7 @@ public:
     ~RadialStitcher();
 
     // Main stitching process
-    cv::Mat Stitch(std::vector<cv::Mat> imgs);
+    cv::Mat Stitch(std::vector<cv::Mat>& imgs);
     std::vector<cv::Mat> cylinder_projection_map(double width, double  height, double focal);
 
 private:

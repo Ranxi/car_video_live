@@ -32,11 +32,13 @@ void Encoder::run()
     encode_and_push();
 }
 
-void Encoder::set_filename_Run(){
+void Encoder::set_filename_Run(int w, int h){
     char push_addr[256];
     sprintf(push_addr, "rtp://%s:%d/live", RDIP.c_str(), RDPORT);
 //    sprintf(push_addr, "udp://%s:%d", RDIP.c_str(), RDPORT);
     this->push_addr = std::string(push_addr);
+    this->video_w = w;
+    this->video_h = h;
     this->start();
 }
 
@@ -206,8 +208,8 @@ void Encoder::encode_and_push(){
     /* put sample parameters */
     c->bit_rate = 2495000;
     /* resolution must be a multiple of two */
-    c->width = 1920;
-    c->height = 1080;
+    c->width = this->video_w;
+    c->height = this->video_h;
     /* frames per second */
     AVRational avtmp = {1,25};
     c->time_base = avtmp;

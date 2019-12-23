@@ -164,7 +164,7 @@ cv::Mat RadialStitcher::merge_image(cv::Mat img1, cv::Mat  img2, cv::Point shift
 }
 
 // Main stitching process
-cv::Mat RadialStitcher::Stitch(std::vector<cv::Mat> imgs){
+cv::Mat RadialStitcher::Stitch(std::vector<cv::Mat>& imgs){
     std::vector<cv::Point> corners_exposure;
     //计时开始
     clock_t startTime,endTime;
@@ -181,7 +181,7 @@ cv::Mat RadialStitcher::Stitch(std::vector<cv::Mat> imgs){
             dst = merge_image(second, dst, shift2_34);
             dst = merge_image(first, dst,shift1_234);
     endTime = clock();//计时结束
-    std::cout << "The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC << "s" << std::endl;
+//    std::cout << "The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC << "s" << std::endl;
     return dst;
 }
 
