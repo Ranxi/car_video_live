@@ -5,7 +5,7 @@
 #include <QQueue>
 
 QMutex mutex;
-QList<cv::Mat > listImage;
+QList<JYFrame* > listImage;
 bool listOver;
 //QList<IplImage*> listImage;
 

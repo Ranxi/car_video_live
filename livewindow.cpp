@@ -4,7 +4,7 @@
 #include <QTime>
 
 extern QMutex mutex;
-extern QList<cv::Mat > listImage;
+extern QList<JYFrame* > listImage;
 extern bool listOver;
 //extern QList<IplImage*> listImage;
 
@@ -49,7 +49,7 @@ void LiveWindow::on_startBtn_pressed(){
             pusher->wait();
             mutex.lock();
             for (auto x : listImage)
-                x.release();
+                x->frame.release();
             listImage.clear();
             mutex.unlock();
         }
@@ -62,7 +62,7 @@ void LiveWindow::on_startBtn_pressed(){
         disconnect(&timer, &QTimer::timeout, this, 0);
         mutex.lock();
         for (auto x : listImage)
-            x.release();
+            x->frame.release();
         listImage.clear();
         mutex.unlock();
         m_stat = Ui::IDLE;
@@ -122,7 +122,8 @@ void LiveWindow::updateFrame(){
 //        IplImage *pimage = &IplImage(frame);
 //        IplImage *image = cvCloneImage(pimage);
         mutex.lock();
-        listImage.append(frame.clone());
+        JYFrame * curframe = new JYFrame(av_gettime(), frame.clone());
+        listImage.append(curframe);
 //        listImage.append(image);
         qDebug("[Player] listImage count : %d\n", listImage.size());
         mutex.unlock();
@@ -142,11 +143,14 @@ void LiveWindow::updateFrame(){
         qDebug("[Player] update pixmap: %d\n", cur_time.elapsed());
 //        frame.release();
         //qApp->processEvents();
+//        curframe->frame.release();
+//        free(curframe);
     }
     else{
         listOver = true;
         on_startBtn_pressed();
     }
+
 }
 // http://172.16.20.252:23323
 // C:\Users\admin\Videos\cam\hhhh.mp4
@@ -221,7 +225,7 @@ void LiveWindow::updateFrame(){
 //    ui->startBtn->setText("Start");
 //    printf("ui height %d and width %d\n",ui->graphicsView->width(), ui->graphicsView->height());
 //}
-// http://172.16.20.252:23323
+// http://172.16.20.116:23323
 // /media/teeshark/OS/Users/Public/Videos/Sample Videos/animal.wmv
 // /media/teeshark/OS/Users/admin/Videos/Prepar3D/Prepar3D 04.13.2018 - 16.53.52.01.mp4
 // /media/teeshark/OS/Users/admin/Desktop/shifeiJ20/VID_20180513_203441.mp4_20180526_155356.mkv

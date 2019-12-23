@@ -8,7 +8,7 @@
 
 
 extern QMutex mutex;
-extern QList<cv::Mat > listImage;
+extern QList<JYFrame* > listImage;
 extern bool listOver;
 //extern QList<IplImage*> listImage;
 std::string RDIP = "172.16.20.116";
@@ -35,6 +35,7 @@ void Encoder::run()
 void Encoder::set_filename_Run(){
     char push_addr[256];
     sprintf(push_addr, "rtp://%s:%d/live", RDIP.c_str(), RDPORT);
+//    sprintf(push_addr, "udp://%s:%d", RDIP.c_str(), RDPORT);
     this->push_addr = std::string(push_addr);
     this->start();
 }
@@ -66,9 +67,41 @@ static void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
         }
 //        printf("Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
 //        fwrite(pkt->data, 1, pkt->size, outfile);
-        qDebug("[Encoder] ----> Receive packet %3""lld"", latency: %d\n", pkt->pts, av_gettime()-buff_latency[pkt->pts]);
-        laten_list.push_back(av_gettime()-buff_latency[pkt->pts]);
-        buff_latency.erase(buff_latency[pkt->pts]);
+        int64_t * time_zone;
+//        bool embeded = false;
+//        int bi_zero = 0;
+//        if(pkt->flags){
+//            for(int hkp=0; (hkp<<1) < pkt->size; hkp++){
+//                time_zone = (int32_t *)(pkt->data+(hkp<<1));
+//                if( *time_zone == 0 ){
+//    //                *time_zone = pkt->pts;
+//                    embeded = true;
+//                    bi_zero++;
+//                }
+//            }
+//            qDebug("[Encoder] ----> Receive packet %3""lld"", 0x%llx, sofar latency: %d, encode latency: %d, embeded %d, last bytes: 0x%llx\n",
+//                   pkt->pts, pkt->pts, av_gettime()-pkt->pts, av_gettime()-buff_latency[pkt->pts],bi_zero, *time_zone);
+//        }
+        time_zone = (int64_t *)(pkt->data+pkt->size-128);
+//        if(!pkt->flags){
+//            *time_zone = pkt->pts;
+//        }
+//        else
+        qDebug("[Encoder] ----> Receive packet %3""lld"", 0x%llx, sofar latency: %d, encode latency: %d, last bytes: 0x%llx\n",
+               pkt->pts, pkt->pts, av_gettime()-pkt->pts, av_gettime()-buff_latency[pkt->pts],*time_zone);
+//        *hack2 ^= pkt->pts;
+//        qDebug("[Encoder] ----> Hack pkt.data %x %x %x %x %x %x %x %x",
+//               pkt->data[pkt->size-8],
+//               pkt->data[pkt->size-7],
+//               pkt->data[pkt->size-6],
+//               pkt->data[pkt->size-5],
+//               pkt->data[pkt->size-4],
+//               pkt->data[pkt->size-3],
+//               pkt->data[pkt->size-2],
+//               pkt->data[pkt->size-1]);
+        laten_list.push_back(av_gettime()-pkt->pts);
+        buff_latency.erase(pkt->pts);
+        pkt->convergence_duration = pkt->pts;
         ret2 = av_interleaved_write_frame(fmtctx, pkt);
         if (ret2 < 0)
             printf("Error muxing packet\n");
@@ -149,6 +182,8 @@ void Encoder::encode_and_push(){
         avformat_alloc_output_context2(&fmtctx, NULL, "rtsp", this->push_addr.c_str());
     else if(this->push_addr.compare(0, 3, "rtp")==0)
         avformat_alloc_output_context2(&fmtctx, NULL, "rtp", this->push_addr.c_str());
+    else if(this->push_addr.compare(0,3,"udp")==0)
+        avformat_alloc_output_context2(&fmtctx, NULL, "mpegts", this->push_addr.c_str());
     else{
         fprintf(stderr, "Do not support push address: %s\n", this->push_addr.c_str());
         exit(1);
@@ -258,6 +293,8 @@ void Encoder::encode_and_push(){
     int index = 0;
 
     while (!isInterruptionRequested() && !listOver ) {
+        JYFrame* jyf;
+        int64_t l_time;
         mutex.lock();
         if(listImage.count() <= 0){
             mutex.unlock();
@@ -266,20 +303,26 @@ void Encoder::encode_and_push(){
         intval = cur_time.elapsed();
         cur_time.start();
         qDebug("[Encoder] one frame time lock: %d\n", intval);
-        cv::Mat pFrame;
         if (listImage.count() > 3){
-            pFrame = listImage.back();
+            jyf = listImage.back();
             listImage.pop_back();
-            for (auto x : listImage)
-                x.release();
+            for (auto x : listImage){
+                x->frame.release();
+                free(x);
+            }
             listImage.clear();
         }
         else{
-            pFrame = listImage[0];
-    //        IplImage *pFrame = listImage[0];
+            jyf = listImage[0];
             listImage.pop_front();
         }
         mutex.unlock();
+        cv::Mat pFrame = jyf->frame;
+        l_time = jyf->launch_time;
+        // NECESSARY! Reduce the ref count to cv::Mat.data,
+        //     so that pFrame.release() will release memory finally.
+        jyf->frame.release();
+        free(jyf);
         fflush(stdout);
         /* make sure the frame data is writable */
         ret = av_frame_make_writable(frame);
@@ -295,7 +338,7 @@ void Encoder::encode_and_push(){
         intval = cur_time.elapsed();
         cur_time.start();
         qDebug("[Encoder] one frame time convert: %d\n", intval);
-        frame->pts = index++; // av_gettime();
+        frame->pts = l_time;
         buff_latency[frame->pts] = av_gettime();
         // |>>>>>>>>> Encode the image >>>>>>>>>>
 //        av_init_packet(pkt);

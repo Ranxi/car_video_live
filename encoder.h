@@ -35,4 +35,13 @@ public:
     void set_filename_Run();
 };
 
+struct JYFrame{
+//    int seq;
+    int64_t launch_time;
+    cv::Mat frame;
+    JYFrame(int64_t t, cv::Mat mt): launch_time(t){
+        frame = std::move(mt);
+    }
+};
+
 #endif // ENCODER_H
