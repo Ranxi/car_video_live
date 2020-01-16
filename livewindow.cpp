@@ -5,7 +5,7 @@
 
 extern QMutex mutex;
 extern QList<JYFrame* > listImage;
-extern bool listOver;
+extern bool decoded_listOver;
 //extern QList<IplImage*> listImage;
 
 LiveWindow::LiveWindow(QWidget *parent) :
@@ -21,7 +21,7 @@ LiveWindow::LiveWindow(QWidget *parent) :
     whetherToPush = true;
     m_stat = Ui::SERVERSTAT::IDLE;
     vtype = Ui::VIDEOTYPE::NONE;
-    ui->videoEdit->setText("/media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4");
+    ui->videoEdit->setText("/media/teeshark/Work/LYQ/autonomous_car/video/360s.Relying.mp4");
 }
 
 LiveWindow::~LiveWindow()
@@ -62,7 +62,7 @@ void LiveWindow::on_startBtn_pressed(){
         vtype = Ui::VIDEOTYPE::NONE;
         m_stat = Ui::SERVERSTAT::IDLE;
         ui->startBtn->setText("Start");
-        listOver = true;
+        decoded_listOver = true;
         return;
     }
     else if (pusher!=NULL && pusher->isFinished() && (Ui::SERVERSTAT::IDLE!=m_stat)){
@@ -74,7 +74,7 @@ void LiveWindow::on_startBtn_pressed(){
         mutex.unlock();
         m_stat = Ui::SERVERSTAT::IDLE;
         ui->startBtn->setText("Start");
-        listOver = true;
+        decoded_listOver = true;
         return;
     }
     else{
@@ -121,12 +121,12 @@ void LiveWindow::on_startBtn_pressed(){
             }
             connect(&timer, &QTimer::timeout, this, &LiveWindow::updateFrame);
             vtype = Ui::VIDEOTYPE::LOCALFILE;
-            v_width = 1920;
-            v_height = 1080;
+            v_width = 1920; //1280;  //1920;
+            v_height = 1080; //720;  //1080;
         }
         if (whetherToPush && Ui::VIDEOTYPE::NETWORK!=vtype){
             pusher->set_filename_Run(v_width, v_height);
-            listOver = false;
+            decoded_listOver = false;
         }
         ui->startBtn->setText("Stop");
         m_stat = Ui::SERVERSTAT::PUSHING;
@@ -167,7 +167,7 @@ void LiveWindow::updateFrame(){
 //        free(curframe);
     }
     else{
-        listOver = true;
+        decoded_listOver = true;
         on_startBtn_pressed();
     }
 
@@ -202,7 +202,7 @@ void LiveWindow::updateFrameFromStitcher(){
         img_list.push_back(cylinder);
     }
     if(EMPTY){
-        listOver = true;
+        decoded_listOver = true;
         on_startBtn_pressed();
         return;
     }
@@ -299,10 +299,12 @@ void LiveWindow::updateFrameFromStitcher(){
 // /media/teeshark/Work/LYQ/entertainment/Relying.on.Heaven.to.Slaughter.Dragons.E49.1080P.WEB-DL.AAC.H264-DanNi.mp4
 // /media/teeshark/Work/LYQ/entertainment/18s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg
 // /media/teeshark/Work/LYQ/entertainment/49s.Relying.on.Heaven.to.Slaughter.Dragons.2019.E43.1080p.WEB-DL.H264.mpeg
+// /media/teeshark/Work/LYQ/entertainment/The.Big.Short.2015.720p.BluRay.x264.AAC-iHD.mp4
 //  ====== WITH TIME COUNTER ======
 // /media/teeshark/Work/LYQ/autonomous_car/video/timecounter.mp4
 // /media/teeshark/Work/LYQ/autonomous_car/video/360s.Relying.mp4
 // /media/teeshark/Work/LYQ/autonomous_car/video/whole.Relying.mp4
+// /media/teeshark/Work/LYQ/entertainment/The.Big.Short.2015.720p.BluRay.x264.AAC-iHD.mp4
 
 
 
@@ -323,7 +325,7 @@ void LiveWindow::closeEvent(QCloseEvent *event){
         QMessageBox::warning(this, "Warning",
                              "Stop the video before closing the application!");
         //event->ignore();
-        listOver = true;
+        decoded_listOver = true;
         on_startBtn_pressed();
         event->accept();
     }

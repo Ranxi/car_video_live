@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QThread>
 #include <QDebug>
+#include <QUdpSocket>
 extern "C"
 {
 #include <libavcodec/avcodec.h>
@@ -32,9 +33,12 @@ public:
     void run();
     void set_filename_Run(int w, int h);
 private:
+    QUdpSocket *udpsender;
     std::string push_addr;
     int video_w;
     int video_h;
+//    QHostAddress destIP;
+//    quint16 destPort;
 };
 
 struct JYFrame{

@@ -6,7 +6,7 @@
 
 QMutex mutex;
 QList<JYFrame* > listImage;
-bool listOver;
+bool decoded_listOver;
 //QList<IplImage*> listImage;
 
 int main(int argc, char *argv[])
@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
     Encoder abc;
 
     listImage.clear();
-    listOver = false;
+    decoded_listOver = false;
     w.set_encoder(&abc);
 
     return a.exec();

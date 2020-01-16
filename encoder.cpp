@@ -6,25 +6,35 @@
 #include <algorithm>
 #include <cstring>
 
+#define USE_NVENC           // TODO: detect the existence of nvenc-supported NVIDIA CARD && cuda && ffmpeg ENABLE
+//#define USE_AV_INTERLEAVE
 
 extern QMutex mutex;
 extern QList<JYFrame* > listImage;
-extern bool listOver;
+extern bool decoded_listOver;
 //extern QList<IplImage*> listImage;
 std::string RDIP = "172.16.20.116";
 //std::string RDIP = "127.0.0.1";
 int RDPORT = 56789;
+int udp_send_cnt = 0;
 __gnu_cxx::hash_map<int, int64_t> buff_latency;
 std::vector<int> laten_list;
+QHostAddress destIP;
+quint16 destPort;
 
 Encoder::Encoder(QObject *parent):QThread(parent)
 {
 //    qDebug("%s", avcodec_configuration());
 //    qDebug("version: %d", avcodec_version());
+    udpsender = new QUdpSocket(this);
+    QHostAddress localhost = QHostAddress::Any;
+//    udpsender->bind(localhost, RDPORT-1);
+    destIP = QHostAddress("172.16.20.116");
+    destPort = RDPORT+1;
 }
 
 Encoder::~Encoder(void){
-
+    udpsender->close();
 }
 
 void Encoder::run()
@@ -34,18 +44,46 @@ void Encoder::run()
 
 void Encoder::set_filename_Run(int w, int h){
     char push_addr[256];
-    sprintf(push_addr, "rtp://%s:%d/live", RDIP.c_str(), RDPORT);
-//    sprintf(push_addr, "udp://%s:%d", RDIP.c_str(), RDPORT);
+//    sprintf(push_addr, "rtp://%s:%d/live", RDIP.c_str(), RDPORT);
+    sprintf(push_addr, "udp://%s:%d", RDIP.c_str(), RDPORT);
     this->push_addr = std::string(push_addr);
     this->video_w = w;
     this->video_h = h;
     this->start();
 }
 
+static int64 udp_send_packet(AVPacket *pkt, QUdpSocket* sder){
+
+    unsigned char head_field[62];
+    memset(head_field, 0, sizeof(head_field));
+    int64_t *p64;
+    int * p32;
+    uint16_t * up16;
+    p64 = (int64_t*)head_field;         *p64 = 0x123456;
+    p64 = (int64_t*)(head_field+8);     *p64 = pkt->dts;
+    p64 = (int64_t*)(head_field+16);    *p64 = pkt->duration;
+    p32 = (int*)(head_field+24);        *p32 = pkt->flags;
+    p64 = (int64_t*)(head_field+28);    *p64 = pkt->pos;
+    p64 = (int64_t*)(head_field+36);    *p64 = pkt->pts;
+    assert(pkt->side_data_elems <= 1);
+    p32 = (int*)(head_field+44);        *p32 = pkt->stream_index;
+    p32 = (int*)(head_field+48);        *p32 = pkt->side_data_elems;
+    if (pkt->side_data_elems > 0){
+        up16 = (uint16_t*)(head_field+52);  *up16 = pkt->side_data->type;
+        p32 = (int*)(head_field+54);        *p32 = pkt->side_data->size;
+    }
+    p32 = (int*)(head_field+58);        *p32 = pkt->size;
+    QByteArray pkt_bytes(QByteArray::fromRawData((const char*)head_field, 62));
+    if (pkt->size > 0){
+        pkt_bytes.append((const char *)pkt->data, pkt->size);
+    }
+    int64 ret = sder->writeDatagram(pkt_bytes, destIP, destPort);
+    return ret;
+}
 
 
 static void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
-                   AVFormatContext *fmtctx)
+                   AVFormatContext *fmtctx, QUdpSocket* sder)
 {
     int ret, ret2;
     /* send the frame to the encoder */
@@ -70,41 +108,24 @@ static void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
 //        printf("Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
 //        fwrite(pkt->data, 1, pkt->size, outfile);
         int64_t * time_zone;
-//        bool embeded = false;
-//        int bi_zero = 0;
-//        if(pkt->flags){
-//            for(int hkp=0; (hkp<<1) < pkt->size; hkp++){
-//                time_zone = (int32_t *)(pkt->data+(hkp<<1));
-//                if( *time_zone == 0 ){
-//    //                *time_zone = pkt->pts;
-//                    embeded = true;
-//                    bi_zero++;
-//                }
-//            }
-//            qDebug("[Encoder] ----> Receive packet %3""lld"", 0x%llx, sofar latency: %d, encode latency: %d, embeded %d, last bytes: 0x%llx\n",
-//                   pkt->pts, pkt->pts, av_gettime()-pkt->pts, av_gettime()-buff_latency[pkt->pts],bi_zero, *time_zone);
-//        }
         time_zone = (int64_t *)(pkt->data+pkt->size-128);
-//        if(!pkt->flags){
-//            *time_zone = pkt->pts;
-//        }
-//        else
-        qDebug("[Encoder] ----> Receive packet %3""lld"", 0x%llx, sofar latency: %d, encode latency: %d, last bytes: 0x%llx\n",
-               pkt->pts, pkt->pts, av_gettime()-pkt->pts, av_gettime()-buff_latency[pkt->pts],*time_zone);
-//        *hack2 ^= pkt->pts;
-//        qDebug("[Encoder] ----> Hack pkt.data %x %x %x %x %x %x %x %x",
-//               pkt->data[pkt->size-8],
-//               pkt->data[pkt->size-7],
-//               pkt->data[pkt->size-6],
-//               pkt->data[pkt->size-5],
-//               pkt->data[pkt->size-4],
-//               pkt->data[pkt->size-3],
-//               pkt->data[pkt->size-2],
-//               pkt->data[pkt->size-1]);
+
+        qDebug("[Encoder] ----> Receive packet %3""lld"", 0x%llx, sofar latency: %d, encode latency: %d, pkt_buf: 0x%x\n",
+               pkt->pts, pkt->pts, av_gettime()-pkt->pts, av_gettime()-buff_latency[pkt->pts], pkt->buf);
+
+
         laten_list.push_back(av_gettime()-pkt->pts);
         buff_latency.erase(pkt->pts);
-        pkt->convergence_duration = pkt->pts;
+//        pkt->convergence_duration = pkt->pts;
+#ifndef USE_AV_INTERLEAVE
+        ret2 = udp_send_packet(pkt, sder);
+        udp_send_cnt++;
+        // will increase latency of initial some frames at clients
+        if(udp_send_cnt & 0x7 == 0x7)
+            ret2 = av_interleaved_write_frame(fmtctx, pkt);
+#else
         ret2 = av_interleaved_write_frame(fmtctx, pkt);
+#endif
         if (ret2 < 0)
             printf("Error muxing packet\n");
         av_packet_unref(pkt);
@@ -172,8 +193,11 @@ void Encoder::encode_and_push(){
     uint8_t endcode[] = { 0, 0, 1, 0xb7 };
     AVCodecID codec_id = AV_CODEC_ID_H264;
     /* find the mpeg1video encoder */
-//    codec = avcodec_find_encoder((AVCodecID)codec_id);
+#ifndef USE_NVENC
+    codec = avcodec_find_encoder((AVCodecID)codec_id);
+#else
     codec = avcodec_find_encoder_by_name("h264_nvenc");
+#endif
     if (!codec) {
         printf( "Codec '%d' not found\n", codec_id);
         exit(1);
@@ -294,7 +318,7 @@ void Encoder::encode_and_push(){
     int sum_time = 0, intval;
     int index = 0;
 
-    while (!isInterruptionRequested() && !listOver ) {
+    while (!isInterruptionRequested() && !decoded_listOver ) {
         JYFrame* jyf;
         int64_t l_time;
         mutex.lock();
@@ -313,6 +337,7 @@ void Encoder::encode_and_push(){
                 free(x);
             }
             listImage.clear();
+            qDebug("[Encoder] abandon some frames");
         }
         else{
             jyf = listImage[0];
@@ -345,7 +370,10 @@ void Encoder::encode_and_push(){
         // |>>>>>>>>> Encode the image >>>>>>>>>>
 //        av_init_packet(pkt);
         pkt->stream_index = videoindex;
-        encode(video_st->codec, frame, pkt, fmtctx);
+        if(index==450)
+            printf("The last frame");
+        encode(video_st->codec, frame, pkt, fmtctx, this->udpsender);
+        index++;
 //        av_init_packet(pkt);
 //        pkt->pts = AV_NOPTS_VALUE;        // Presentation timestamp; the time at which the decompressed packet will be presented to the user
 //        pkt->dts = AV_NOPTS_VALUE;        // Decompression timestamp; the time at which the packet is decompressed.
@@ -375,15 +403,17 @@ void Encoder::encode_and_push(){
         sum_time += intval;
     }
     /* flush the encoder */
-    qDebug("i is: %d\n", i);
+    qDebug("index is: %d\n", index);
     qDebug("I am over!.");
-    encode(video_st->codec, NULL, pkt, fmtctx);
+    encode(video_st->codec, NULL, pkt, fmtctx, this->udpsender);
 
     /* add sequence end code to have a real MPEG file */
     // fwrite(endcode, 1, sizeof(endcode), f);
     //fclose(f);
 
+#ifdef  USE_AV_INTERLEAVE
     av_write_trailer(fmtctx);
+#endif
 
     // |>>>>>> print SDP info for VLC >>>>>>>
     char sdp[2048];
@@ -405,5 +435,4 @@ void Encoder::encode_and_push(){
     av_frame_free(&frame);
     av_packet_free(&pkt);
     //avformat_free_context(fmtctx);
-
 }
