@@ -35,6 +35,7 @@ void LiveWindow::set_encoder(Encoder *ecder){
 
 
 void LiveWindow::on_startBtn_pressed(){
+    // dealing with interaction when it is during playing
     if(video.isOpened() || (pusher!=NULL && pusher->isRunning()) || rcver!=NULL){
         video.release();
         disconnect(&timer, &QTimer::timeout, this, 0);
@@ -77,6 +78,7 @@ void LiveWindow::on_startBtn_pressed(){
         decoded_listOver = true;
         return;
     }
+    // dealing with interaction when it is inactive
     else{
         bool isCamera;
         int cameraIndex = ui->videoEdit->text().toInt(&isCamera);

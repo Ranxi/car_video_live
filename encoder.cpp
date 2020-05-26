@@ -269,6 +269,9 @@ void Encoder::encode_and_push(){
     videoindex = video_st->id = fmtctx->nb_streams - 1;  //加入到fmt_ctx流
     ret = avcodec_open2(video_st->codec, codec, NULL);
     if (ret < 0) {
+        // av_err2str will report error, SOLUTION: click it, replace the statement of av_err2str as following,
+        //      #define av_err2str(errnum) av_make_error_string((char*)__builtin_alloca(AV_ERROR_MAX_STRING_SIZE), AV_ERROR_MAX_STRING_SIZE, errnum)
+        // then rebuild ffmpeg.
         fprintf(stderr, "Could not open codec: %s\n", av_err2str(ret));
         exit(1);
     }
@@ -411,6 +414,7 @@ void Encoder::encode_and_push(){
     // fwrite(endcode, 1, sizeof(endcode), f);
     //fclose(f);
 
+    // may need to remove this #ifdef
 #ifdef  USE_AV_INTERLEAVE
     av_write_trailer(fmtctx);
 #endif

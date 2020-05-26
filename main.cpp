@@ -4,9 +4,9 @@
 #include <QMutex>
 #include <QQueue>
 
-QMutex mutex;
-QList<JYFrame* > listImage;
-bool decoded_listOver;
+QMutex mutex;           // mutex used for listImage;
+QList<JYFrame* > listImage;     // image queue used between encoder
+bool decoded_listOver;          // better call it : encoded_over;
 //QList<IplImage*> listImage;
 
 int main(int argc, char *argv[])
